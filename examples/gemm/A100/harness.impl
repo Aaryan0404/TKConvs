@@ -53,12 +53,14 @@ bool check_value(float abs_tol, float rel_tol, half *h_d_c, half *h_c, int m, in
 }
 
 int main(int argc, char **argv) {
-    constexpr size_t m = 512;
-    constexpr size_t n = 512;
-    constexpr size_t k = 512;
+    constexpr size_t m = 32 * 32;
+    constexpr size_t n = 16
+    constexpr size_t k = 3 * 3 * 16;
+
     constexpr size_t lda = (k + 16 - 1) / 16;
     constexpr size_t ldb = (n + 16 - 1) / 16;
     constexpr size_t ldc = (n + 16 - 1) / 16;
+
     half alpha = 1.0f;
     half beta = 0.0f;
 
