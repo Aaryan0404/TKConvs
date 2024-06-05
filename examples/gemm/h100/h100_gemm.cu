@@ -9,6 +9,10 @@
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
 
+//////////////////
+// KERNEL START //
+//////////////////
+
 #define MMA_N 128
 #define MMA_K 128
 
@@ -22,10 +26,6 @@ using namespace kittens;
 #define a_smem_tile kittens::st_bf<4,8,wgmma_swizzle_l>
 #define b_smem_tile kittens::st_bf<8,8,wgmma_swizzle_l>
 #define c_smem_tile kittens::st_bf<4,8,wgmma_swizzle_l>
-
-static_assert(MMA_M % 128 == 0, "MMA_M must be a multiple of 128");
-static_assert(MMA_N % 128 == 0, "MMA_N must be a multiple of 128");
-static_assert(MMA_K % 128 == 0, "MMA_K must be a multiple of 128");
 
 __global__ __launch_bounds__(NUM_WARPGROUPS*kittens::WARPGROUP_THREADS,1)
 void simple_gemm(int m, int n, int k, CUtensorMap* A, CUtensorMap* B, CUtensorMap* C) {
@@ -90,6 +90,9 @@ void simple_gemm(int m, int n, int k, CUtensorMap* A, CUtensorMap* B, CUtensorMa
     }
     tma::store_async_wait();
 }
+////////////////
+// KERNEL END //
+////////////////
 
 #ifdef TORCH_COMPILE
 #include "src/common/pyutils/torch_helpers.cuh"

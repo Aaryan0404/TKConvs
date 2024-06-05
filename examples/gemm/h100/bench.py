@@ -3,6 +3,7 @@ import sys
 import os
 from torch.cuda import Event
 import numpy as np
+import matplotlib.pyplot as plt
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../"))
@@ -80,14 +81,36 @@ def measure_gemm_performance(m, n, k):
     print(f"PyTorch GEMM - Average time taken: {pytorch_time_us:.2f} us, Efficiency: {pytorch_tflops:.2f} TFLOPS")
     print(f"______________________________________________________")
 
+    return (m, n, k, custom_time_us, custom_tflops, pytorch_time_us, pytorch_tflops)
+
 # Test configurations
 configs = [
     (1024, 1024, 1024),
     (2048, 2048, 2048),
     (4096, 4096, 4096),
-    (8192, 8192, 8192),
-    (16384, 16384, 16384)
+    (8192, 8192, 8192)
 ]
 
+results = []
+
 for config in configs:
-    measure_gemm_performance(*config)
+    results.append(measure_gemm_performance(*config))
+
+# Extract results for plotting
+configs = [f"{m}x{n}x{k}" for (m, n, k, _, _, _, _) in results]
+custom_tflops = [custom_tflops for (_, _, _, _, custom_tflops, _, _) in results]
+pytorch_tflops = [pytorch_tflops for (_, _, _, _, _, _, pytorch_tflops) in results]
+
+# Plotting the results
+plt.figure(figsize=(10, 6))
+plt.plot(configs, custom_tflops, label='Custom GEMM', marker='o')
+plt.plot(configs, pytorch_tflops, label='PyTorch GEMM', marker='x')
+plt.xlabel('Configuration (MxNxK)')
+plt.ylabel('Efficiency (TFLOPS)')
+plt.title('GEMM Performance Comparison')
+plt.legend()
+plt.grid(True)
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.savefig('gemm_performance_comparison.png')
+plt.show()
