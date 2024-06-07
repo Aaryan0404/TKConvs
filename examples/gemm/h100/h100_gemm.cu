@@ -67,7 +67,7 @@ void simple_gemm(int m, int n, int k, CUtensorMap* A, CUtensorMap* B, CUtensorMa
                 tma::set_bytes(smem_barrier, size_bytes<typeof(a_smem[0][0]), NUM_WARPGROUPS> + size_bytes<typeof(b_smem[0])>);
                 
                 for(int wg = 0; wg < NUM_WARPGROUPS; wg++) {
-                    tma::load_async(a_smem[toc][wg], A, smem_barrier, block_row+wg, i+1);
+                    tma::load_async(a_smem[toc][wg], A, smem_barrier, block_row+wg, 0);
                 }
 
                 tma::load_async(b_smem[toc], B, smem_barrier, block_col, i+1);

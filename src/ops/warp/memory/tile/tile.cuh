@@ -11,5 +11,6 @@
 
 #ifdef KITTENS_HOPPER
 #include "tma.cuh"
+#include "tma_im2col.cuh"
 #include "dsmem.cuh"
 #endif
