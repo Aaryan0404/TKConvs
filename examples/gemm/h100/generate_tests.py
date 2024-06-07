@@ -20,10 +20,10 @@ assert(P == H)
 assert(Q == W)
 
 # channels
-C = 64
+C = 128
 
 # num filters
-K = 64
+K = 128
 # filter height, width
 R = 3
 S = 3
@@ -45,9 +45,10 @@ input_data = x.permute(0, 2, 3, 1)
 weights_data = weights
 output_data = output_ref.permute(0, 2, 3, 1)
 
-print("txt input shape: ", input_data.shape)
-print("txt weights shape: ", weights_data.shape)
-print("txt output shape: ", output_data.shape)
+print("conv input shape (TXT INPUT): ", input_data.shape)     # N, H, W, K
+print("conv weight shape: ", weights_data.shape) # K, C, R, S
+print("conv out shape: ", output_data.shape)   # N, H, W, C
+print("-" * 50)
 
 # Perform the convolution with an implicit GEMM
 # M = B * img_H * img_W
@@ -61,36 +62,36 @@ unfolded_input = torch.nn.functional.unfold(input_data.permute(0, 3, 1, 2), (R, 
 input_gemm = unfolded_input.permute(0, 2, 1).contiguous().view(-1, C * R * S)
 
 # Reshape weights to match the GEMM operation
-weights_gemm = weights_data.view(K, -1).permute(1, 0).contiguous()
+weights_gemm = weights_data.view(K, -1).contiguous()
 
 # Perform the GEMM operation
-output_gemm = input_gemm @ weights_gemm
+output_gemm = input_gemm @ weights_gemm.t()
+
+# Reshape the output to match the expected output shape
+output_gemm_check = output_gemm.view(N, P, Q, K)
 
 # print shapes
 print("A matrix shape: ", input_gemm.shape)
-print("B matrix shape: ", weights_gemm.shape)
-print("Output shape: ", output_gemm.shape)
-
-# Reshape the output to match the expected output shape
-output_gemm = output_gemm.view(N, P, Q, K).permute(0, 3, 1, 2).contiguous()
-output_gemm = output_gemm.permute(0, 2, 3, 1)
+print("B matrix shape (TXT INPUT): ", weights_gemm.shape)
+print("Output shape (TXT INPUT): ", output_gemm.shape)
+print("-" * 50)
 
 # print out the difference between the two outputs
-print("Verified implicit GEMM wrt PyTorch Conv - max diff: ", torch.max(torch.abs(output_gemm - output_data)).item())
+print("Verified implicit GEMM wrt PyTorch Conv - max diff: ", torch.max(torch.abs(output_gemm_check - output_data)).item())
 
 fn = f'randn.txt'
 with open(fn, 'w') as f:
-    af = input_data.to(torch.float32).flatten().detach().cpu().numpy()
-    bf = weights_data.to(torch.float32).flatten().detach().cpu().numpy()
-    cf = output_data.to(torch.float32).flatten().detach().cpu().numpy()
+    af = input_gemm.to(torch.float32).flatten().detach().cpu().numpy()
+    bf = weights_gemm.to(torch.float32).flatten().detach().cpu().numpy()
+    cf = output_gemm.to(torch.float32).flatten().detach().cpu().numpy()
     
-    for i in trange(input_data.shape[0] * input_data.shape[1] * input_data.shape[2] * input_data.shape[3]):
+    for i in trange(input_gemm.shape[0] * input_gemm.shape[1]):
         f.write(repr(af[i]))
         f.write(' ')
-    for i in trange(weights_data.shape[0] * weights_data.shape[1] * weights_data.shape[2] * weights_data.shape[3]):
+    for i in trange(weights_gemm.shape[0] * weights_gemm.shape[1]):
         f.write(repr(bf[i]))
         f.write(' ')
-    for i in trange(output_data.shape[0] * output_data.shape[1] * output_data.shape[2] * output_data.shape[3]):
+    for i in trange(output_gemm.shape[0] * output_gemm.shape[1]):
         f.write(repr(cf[i]))
         f.write(' ')
 

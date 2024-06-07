@@ -13,9 +13,9 @@
 #define P 256
 #define Q 256
 
-#define C 64
+#define C 128
 
-#define K 64
+#define K 128
 
 #define R 3
 #define S 3
@@ -41,8 +41,8 @@ inline void __cudaCheckError( const char *file, const int line ) {
 }
 
 int main(int argc, char **argv) {
-    constexpr int TOTAL_ELEMENTS_INPUT         = N * H * W * C;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_INPUT  =     H * W * C;
+    constexpr int TOTAL_ELEMENTS_INPUT         = N * H * W * C * R * S;
+    constexpr int TOTAL_UNIQUE_ELEMENTS_INPUT  =     H * W * C * R * S;
 
     constexpr int TOTAL_ELEMENTS_WEIGHT        = K * C * R * S;
 
@@ -107,19 +107,6 @@ int main(int argc, char **argv) {
     cudaMalloc(&d_weight, TOTAL_ELEMENTS_WEIGHT * sizeof(bf16));
     cudaMalloc(&d_output, TOTAL_ELEMENTS_OUTPUT * sizeof(bf16));
 
-    // print out input_bf
-    for (int i = 0; i < 10; i++) {
-        std::cout << input[i] << std::endl;
-    }
-
-    for (int i = 0; i < 10; i++) {
-        std::cout << weight[i] << std::endl;
-    }
-
-    for (int i = 0; i < 10; i++) {
-        std::cout << output_ref[i] << std::endl;
-    }
-
     cudaMemcpy(d_input,  input_bf,  TOTAL_ELEMENTS_INPUT  * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_weight, weight_bf, TOTAL_ELEMENTS_WEIGHT * sizeof(bf16), cudaMemcpyHostToDevice);
     cudaMemcpy(d_output, output_bf, TOTAL_ELEMENTS_OUTPUT * sizeof(bf16), cudaMemcpyHostToDevice);
@@ -128,8 +115,8 @@ int main(int argc, char **argv) {
     int gemm_n = K;
     int gemm_k = C * R * S;
 
-    CUtensorMap* tma_a = tma::allocate_and_create_tensor_map<a_smem_tile>(d_input,  (gemm_m)/(64), (gemm_k/(R * S))/(MMA_K));
-    CUtensorMap* tma_b = tma::allocate_and_create_tensor_map<b_smem_tile>(d_weight, (gemm_k)/(MMA_K), (gemm_n)/(MMA_N));
+    CUtensorMap* tma_a = tma::allocate_and_create_tensor_map<a_smem_tile>(d_input,  (gemm_m)/(64), (gemm_k)/(MMA_K));
+    CUtensorMap* tma_b = tma::allocate_and_create_tensor_map<b_smem_tile>(d_weight, (gemm_n)/MMA_N, (gemm_k)/(MMA_K));
     CUtensorMap* tma_c = tma::allocate_and_create_tensor_map<c_smem_tile>(d_output, (gemm_m)/(64), (gemm_n)/(MMA_N));
 
     unsigned long mem_size = kittens::MAX_SHARED_MEMORY; 
@@ -140,12 +127,12 @@ int main(int argc, char **argv) {
         mem_size
     ); 
 
-    const dim3 grid_dim{(unsigned int)(gemm_n) / 64, (unsigned int)(gemm_m) / 64};
+    const dim3 grid_dim{(unsigned int)(gemm_n) / MMA_N, (unsigned int)(gemm_m) / MMA_M}; 
     std::cout << grid_dim.x << ' ' << grid_dim.y << std::endl;
 
     std::cout << "Starting computation" << std::endl;
 
-    constexpr int ITERS = 100;
+    constexpr int ITERS = 1;
     auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITERS; i++) {
         simple_gemm<<<grid_dim, NUM_WARPGROUPS * kittens::WARPGROUP_THREADS, mem_size>>>(gemm_m, gemm_n, gemm_k, tma_a, tma_b, tma_c);
@@ -163,6 +150,7 @@ int main(int argc, char **argv) {
 
     for (int i = 0; i < TOTAL_ELEMENTS_OUTPUT; i++) {
         output[i] = __bfloat162float(output_bf[i]);
+        // printf("%f\n", output[i]);
     }
 
     bool good = true; 
@@ -171,12 +159,22 @@ int main(int argc, char **argv) {
     float avg_output     = 0;
     float avg_output_ref = 0;
 
+    std::ofstream o_ref_file("printouts/o_ref.txt");
+    std::ofstream o_file("printouts/o.txt");
+    std::ofstream diff_file("printouts/diff.txt");
+
     for (int i = 0; i < TOTAL_ELEMENTS_OUTPUT; i++) {
         float diff = abs(output[i] - output_ref[i % TOTAL_UNIQUE_ELEMENTS_INPUT]);
         total_diff += diff;
 
         avg_output     += output[i];
         avg_output_ref += output_ref[i % TOTAL_UNIQUE_ELEMENTS_INPUT];
+
+        if (i < TOTAL_UNIQUE_ELEMENTS_OUTPUT) {
+            o_ref_file << output_ref[i] << ' ';
+            o_file << output[i] << ' ';
+            diff_file << diff << ' ';
+        }
 
         if (diff > 1e-3) {
             good = false;
