@@ -3,22 +3,6 @@
 #include <string>
 #include <stdlib.h>
 #include <float.h>
-#include <fstream>
-
-#define N 1
-
-#define H 256
-#define W 256
-
-#define P 256
-#define Q 256
-
-#define C 128
-
-#define K 128
-
-#define R 3
-#define S 3
 
 #define CudaCheckError()    __cudaCheckError( __FILE__, __LINE__ )
 inline void __cudaCheckError( const char *file, const int line ) {
@@ -40,166 +24,140 @@ inline void __cudaCheckError( const char *file, const int line ) {
     }
 }
 
+void cpu_gemm(bf16 *a, bf16 *b, bf16 *c, int M, int N, int K) {
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            float s = 0.0;
+            for (int k = 0; k < K; k++) {
+                s += __bfloat162float(a[i * K + k]) * __bfloat162float(b[j * K + k]);
+            }
+            c[i * N + j] = __float2bfloat16(s);
+        }
+    }
+}
+
+bool check_value(float abs_tol, float rel_tol, bf16 *h_d_c, bf16 *h_c, int m, int n) {
+    for (size_t i = 0; i < m; i++) {
+        for (size_t j = 0; j < n; j++) {
+            float gpu_value = __bfloat162float(h_d_c[i * n + j]);
+            float cpu_value = __bfloat162float(h_c[i * n + j]);
+            float diff = abs(gpu_value - cpu_value);
+            if (diff > max(abs_tol, cpu_value * rel_tol)) {
+                std::cout << "GPU[" << i << ", " << j << "] = " << gpu_value
+                << "\nCPU[" << i << ", " << j << "] = " << cpu_value
+                << "\nAbs Diff: " << diff << std::endl;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 int main(int argc, char **argv) {
-    constexpr int TOTAL_ELEMENTS_INPUT         = N * H * W * C * R * S;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_INPUT  =     H * W * C * R * S;
+    constexpr size_t m = 1024 * 4;
+    constexpr size_t n = 1024 * 4;
+    constexpr size_t k = 1024 * 4;
 
-    constexpr int TOTAL_ELEMENTS_WEIGHT        = K * C * R * S;
+    bool check_cpu = (double(m)*n*k < 1e9);
 
-    constexpr int TOTAL_ELEMENTS_OUTPUT        = N * P * Q * K;
-    constexpr int TOTAL_UNIQUE_ELEMENTS_OUTPUT =     P * Q * K;
-
-    float *input      = new float[TOTAL_UNIQUE_ELEMENTS_INPUT];
-    float *weight     = new float[TOTAL_ELEMENTS_WEIGHT];
-    float *output_ref = new float[TOTAL_UNIQUE_ELEMENTS_OUTPUT];
-
-    bf16 *input_bf  = new bf16[TOTAL_ELEMENTS_INPUT];
-    bf16 *weight_bf = new bf16[TOTAL_ELEMENTS_WEIGHT];
-    bf16 *output_bf = new bf16[TOTAL_ELEMENTS_OUTPUT];
-    float *output   = new float[TOTAL_ELEMENTS_OUTPUT];
-
-    std::ifstream infile(argv[1]);
-
-    std::cout << "Starting to enter!" << std::endl;
-
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_INPUT; i++) {
-        infile >> input[i];
-        if (infile.fail()) {
-            std::cerr << "Error reading input at index " << i << std::endl;
-            return 1;
-        }
-    }
-    std::cout << "Finished loading inp" << std::endl;
+    size_t size_a = m * k * sizeof(bf16);
+    size_t size_b = k * n * sizeof(bf16);
+    size_t size_c = m * n * sizeof(bf16);
     
-    for(int i = 0; i < TOTAL_ELEMENTS_WEIGHT; i++) {
-        infile >> weight[i];
-        if (infile.fail()) {
-            std::cerr << "Error reading weight at index " << i << std::endl;
-            return 1;
-        }
-    }
-    std::cout << "Finished loading wei" << std::endl;
+    bf16 *h_a, *h_b, *d_a, *d_b;
+    bf16 *h_c, *d_c, *h_d_c;
     
-    for(int i = 0; i < TOTAL_UNIQUE_ELEMENTS_OUTPUT; i++) {
-        infile >> output_ref[i];
-        if (infile.fail()) {
-            std::cerr << "Error reading output_ref at index " << i << std::endl;
-            return 1;
-        }
+    h_a = (bf16 *)malloc(size_a);
+    h_b = (bf16 *)malloc(size_b);
+    h_c = (bf16 *)malloc(size_c);
+    cudaMalloc(&d_a, size_a);
+    cudaMalloc(&d_b, size_b);
+    cudaMalloc(&d_c, size_c);
+    h_d_c = (bf16 *)malloc(size_c);
+
+    srand(time(0));
+    for (size_t i = 0; i < m * k; i++) {
+        h_a[i] = __float2bfloat16((float)(k*(i%k)+(i/k)) / (m*k));
     }
-    std::cout << "Finished loading out" << std::endl;
-
-    std::cout << "Finished loading file from " << argv[1] << "!" << std::endl;
-
-    // replicate input
-    for (int n = 0; n < TOTAL_ELEMENTS_INPUT; n++) {
-        input_bf[n] = __float2bfloat16(input[n % TOTAL_UNIQUE_ELEMENTS_INPUT]);
+    for (size_t i = 0; i < n * k; i++) {
+        h_b[i] = __float2bfloat16((float)(i%n==i/n));
     }
-    for (int n = 0; n < TOTAL_ELEMENTS_WEIGHT; n++) {
-        weight_bf[n] = __float2bfloat16(weight[n]);
-    }
-    for (int n = 0; n < TOTAL_ELEMENTS_OUTPUT; n++) {
-        output_bf[n] = __float2bfloat16(0);
-    }
-    
-    bf16 *d_input, *d_weight, *d_output; 
-    cudaMalloc(&d_input,  TOTAL_ELEMENTS_INPUT * sizeof(bf16));
-    cudaMalloc(&d_weight, TOTAL_ELEMENTS_WEIGHT * sizeof(bf16));
-    cudaMalloc(&d_output, TOTAL_ELEMENTS_OUTPUT * sizeof(bf16));
 
-    cudaMemcpy(d_input,  input_bf,  TOTAL_ELEMENTS_INPUT  * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_weight, weight_bf, TOTAL_ELEMENTS_WEIGHT * sizeof(bf16), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_output, output_bf, TOTAL_ELEMENTS_OUTPUT * sizeof(bf16), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_a, h_a, size_a, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_b, h_b, size_b, cudaMemcpyHostToDevice);
 
-    int gemm_m = N * P * Q;
-    int gemm_n = K;
-    int gemm_k = C * R * S;
-
-    CUtensorMap* tma_a = tma::allocate_and_create_tensor_map<a_smem_tile>(d_input,  (gemm_m)/(64), (gemm_k)/(MMA_K));
-    CUtensorMap* tma_b = tma::allocate_and_create_tensor_map<b_smem_tile>(d_weight, (gemm_n)/MMA_N, (gemm_k)/(MMA_K));
-    CUtensorMap* tma_c = tma::allocate_and_create_tensor_map<c_smem_tile>(d_output, (gemm_m)/(64), (gemm_n)/(MMA_N));
-
-    unsigned long mem_size = kittens::MAX_SHARED_MEMORY; 
+    CUtensorMap* tma_a = tma::allocate_and_create_tensor_map<a_smem_tile>(d_a, m/64, k/MMA_K);
+    CUtensorMap* tma_b = tma::allocate_and_create_tensor_map<b_smem_tile>(d_b, n/MMA_N, k/MMA_K);
+    CUtensorMap* tma_c = tma::allocate_and_create_tensor_map<c_smem_tile>(d_c, m/64, n/MMA_N);
 
     cudaFuncSetAttribute(
-        simple_gemm, 
+        simple_gemm,
         cudaFuncAttributeMaxDynamicSharedMemorySize,
-        mem_size
-    ); 
+        200000
+    );
 
-    const dim3 grid_dim{(unsigned int)(gemm_n) / MMA_N, (unsigned int)(gemm_m) / MMA_M}; 
-    std::cout << grid_dim.x << ' ' << grid_dim.y << std::endl;
-
-    std::cout << "Starting computation" << std::endl;
+    const dim3 grid_dim{(unsigned int)(n) / MMA_N, (unsigned int)(m) / MMA_M};
+    std::cout << grid_dim.x << ' ' << grid_dim.y << "  K_tiles = " << k/MMA_K << std::endl;
 
     constexpr int ITERS = 1;
     auto start = std::chrono::high_resolution_clock::now();
     for(int i = 0; i < ITERS; i++) {
-        simple_gemm<<<grid_dim, NUM_WARPGROUPS * kittens::WARPGROUP_THREADS, mem_size>>>(gemm_m, gemm_n, gemm_k, tma_a, tma_b, tma_c);
+        simple_gemm<<<grid_dim, NUM_WARPGROUPS * kittens::WARPGROUP_THREADS, 200000>>>(m, n, k, tma_a, tma_b, tma_c);
     }
     cudaDeviceSynchronize();
-    auto end = std::chrono::high_resolution_clock::now();
 
+    auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double, std::micro> elapsed = end - start;
     
     std::cout << "Computation wall clock time: " << elapsed.count() / ITERS << " us" << std::endl;
     
-    std::cout << "Realized FLOPs: " << (double(gemm_m) * gemm_n * gemm_k * 2 * ITERS) / elapsed.count() / 1e6 << " TFLOPs" << std::endl;
+    std::cout << "Realized FLOPs: " << double(m)*n*k*2*ITERS / elapsed.count() / 1e6 << " TFLOPs" << std::endl;
     CudaCheckError();
-    cudaMemcpy(output_bf, d_output, TOTAL_ELEMENTS_OUTPUT * sizeof(bf16), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_d_c, d_c, size_c, cudaMemcpyDeviceToHost);
+    
 
-    for (int i = 0; i < TOTAL_ELEMENTS_OUTPUT; i++) {
-        output[i] = __bfloat162float(output_bf[i]);
-        // printf("%f\n", output[i]);
+    constexpr float abs_tol = 5.0e-2f;
+    constexpr float rel_tol = 1.0e-2f;
+
+    if(check_cpu) {
+        cpu_gemm(h_a, h_b, h_c, m, n, k);
+        if (check_value(abs_tol, rel_tol, h_d_c, h_c, m, n)) {
+            std::cout << "Test PASSED" << std::endl;
+        } else {
+            std::cout << "Test FAILED" << std::endl;
+
+            for(int i = 0; i < m; i++) {
+                for(int j = 0; j < n; j++) {
+                    std::cout << __bfloat162float(h_d_c[i*n+j]) << " ";
+                }
+                std::cout << std::endl;
+            }
+            std::cout << std::endl;
+            std::cout << std::endl;
+            std::cout << std::endl;
+            std::cout << std::endl;
+            std::cout << std::endl;
+            std::cout << std::endl;
+            for(int i = 0; i < m; i++) {
+                for(int j = 0; j < n; j++) {
+                    std::cout << __bfloat162float(h_c[i*n+j]) << " ";
+                }
+                std::cout << std::endl;
+            }
+            std::cout << std::endl;
+        }
     }
 
-    bool good = true; 
-    float total_diff = 0; 
-
-    float avg_output     = 0;
-    float avg_output_ref = 0;
-
-    std::ofstream o_ref_file("printouts/o_ref.txt");
-    std::ofstream o_file("printouts/o.txt");
-    std::ofstream diff_file("printouts/diff.txt");
-
-    for (int i = 0; i < TOTAL_ELEMENTS_OUTPUT; i++) {
-        float diff = abs(output[i] - output_ref[i % TOTAL_UNIQUE_ELEMENTS_INPUT]);
-        total_diff += diff;
-
-        avg_output     += output[i];
-        avg_output_ref += output_ref[i % TOTAL_UNIQUE_ELEMENTS_INPUT];
-
-        if (i < TOTAL_UNIQUE_ELEMENTS_OUTPUT) {
-            o_ref_file << output_ref[i] << ' ';
-            o_file << output[i] << ' ';
-            diff_file << diff << ' ';
-        }
-
-        if (diff > 1e-3) {
-            good = false;
-        }
-    }
-
-    avg_output     /= TOTAL_ELEMENTS_OUTPUT;
-    avg_output_ref /= TOTAL_ELEMENTS_OUTPUT;
-    total_diff     /= TOTAL_ELEMENTS_OUTPUT;
-
-    std::cout << "Average output: " << avg_output << std::endl;
-    std::cout << "Average output ref: " << avg_output_ref << std::endl;
-    std::cout << "Average diff: " << total_diff << std::endl;
-
-    free(input);
-    free(weight);
-    free(output_ref);
-
-    free(input_bf);
-    free(weight_bf);
-    free(output_bf);
-
-    cudaFree(d_input);
-    cudaFree(d_weight);
-    cudaFree(d_output);
+    free(h_a);
+    free(h_b);
+    free(h_c);
+    free(h_d_c);
+    cudaFree(d_a);
+    cudaFree(d_b);
+    cudaFree(d_c);
+    cudaFree(tma_a);
+    cudaFree(tma_b);
+    cudaFree(tma_c); 
 
     return 0;
 }

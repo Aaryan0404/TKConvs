@@ -1,10 +1,4 @@
-// #define TORCH_COMPILE // defined by default for PyTorch bindings - to use cpp harness, comment this out
-
-#ifdef TORCH_COMPILE
-#include "src/kittens.cuh"
-#else
 #include "../../../src/kittens.cuh"
-#endif
 
 #include <cuda/pipeline>
 #include <cooperative_groups.h>
@@ -41,6 +35,9 @@ void simple_gemm(int m, int n, int k, CUtensorMap* A, CUtensorMap* B, CUtensorMa
 
     a_smem_tile (&a_smem)[2][NUM_WARPGROUPS] = al.allocate<a_smem_tile, 2, NUM_WARPGROUPS>();
     b_smem_tile (&b_smem)[2]                 = al.allocate<b_smem_tile, 2>();
+    
+    rt_fl_1x8<> ab_reg;
+    zero(ab_reg);
 
     __shared__ uint64_t smem_barrier; 
     const int wg = warpid() / 4;
@@ -54,9 +51,6 @@ void simple_gemm(int m, int n, int k, CUtensorMap* A, CUtensorMap* B, CUtensorMa
         }
         tma::load_async(b_smem[tic], B, smem_barrier, block_col, 0);
     }
-
-    rt_fl_1x8<> ab_reg;
-    zero(ab_reg);
     __syncthreads();
 
     for (int i = 0; i < K_tiles; i++, tic^=1, toc^=1) {
@@ -94,47 +88,4 @@ void simple_gemm(int m, int n, int k, CUtensorMap* A, CUtensorMap* B, CUtensorMa
 // KERNEL END //
 ////////////////
 
-#ifdef TORCH_COMPILE
-#include "src/common/pyutils/torch_helpers.cuh"
-#include <iostream>
-
-void gemm(torch::Tensor a, torch::Tensor b, torch::Tensor c) {
-
-    CHECK_INPUT(a);
-    CHECK_INPUT(b);
-    CHECK_INPUT(c);
-
-    TORCH_CHECK(a.scalar_type() == c10::ScalarType::BFloat16, "A must be of type torch.float16");
-    TORCH_CHECK(b.scalar_type() == c10::ScalarType::BFloat16, "B must be of type torch.float16");
-    TORCH_CHECK(c.scalar_type() == c10::ScalarType::BFloat16, "C must be of type torch.float16");
-
-    auto m = a.size(0);
-    auto k = a.size(1);
-    auto n = b.size(1);
-
-    c10::BFloat16 *A_ptr = a.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *B_ptr = b.data_ptr<c10::BFloat16>();
-    c10::BFloat16 *C_ptr = c.data_ptr<c10::BFloat16>();
-
-    bf16* A_bf16 = reinterpret_cast<bf16*>(A_ptr);
-    bf16* B_bf16 = reinterpret_cast<bf16*>(B_ptr);
-    bf16* C_bf16 = reinterpret_cast<bf16*>(C_ptr);
-
-    CUtensorMap* tma_a = tma::allocate_and_create_tensor_map<a_smem_tile>(A_bf16, m/64, k/MMA_K);
-    CUtensorMap* tma_b = tma::allocate_and_create_tensor_map<b_smem_tile>(B_bf16, n/MMA_N, k/MMA_K);
-    CUtensorMap* tma_c = tma::allocate_and_create_tensor_map<c_smem_tile>(C_bf16, m/64, n/MMA_N);
-
-    cudaFuncSetAttribute(
-        simple_gemm,
-        cudaFuncAttributeMaxDynamicSharedMemorySize,
-        200000
-    );
-
-    const dim3 grid_dim{(n) / MMA_N, (m) / MMA_M};
-
-    simple_gemm<<<grid_dim, NUM_WARPGROUPS * kittens::WARPGROUP_THREADS, 200000>>>(m, n, k, tma_a, tma_b, tma_c);
-}
-
-#else
-#include "harness.impl"
-#endif
+#include "harness_conv.impl"

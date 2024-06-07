@@ -10,7 +10,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 sys.path.insert(0, project_root)
 sys.path.append('build/lib.linux-x86_64-cpython-312')
-import h100_gemm as tk
+import simple_gemm as tk
 
 def flops_gemm(m, n, k):
     return 2 * m * n * k
@@ -27,10 +27,10 @@ def measure_gemm_performance(m, n, k):
     print("Using device:", device)
 
     # Generate random data for A and B matrices
-    A = torch.randn(m, k, device=device, dtype=torch.bfloat16).contiguous()
-    B = torch.randn(k, n, device=device, dtype=torch.bfloat16).contiguous()
+    A = torch.randn(m, k, device=device, dtype=torch.float16).contiguous()
+    B = torch.randn(k, n, device=device, dtype=torch.float16).contiguous()
     
-    C = torch.zeros(m, n, device=device, dtype=torch.bfloat16).contiguous()
+    C = torch.zeros(m, n, device=device, dtype=torch.float16).contiguous()
     
     torch.cuda.synchronize()
 
