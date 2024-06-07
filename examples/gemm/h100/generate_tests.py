@@ -45,7 +45,7 @@ input_data = x.permute(0, 2, 3, 1)
 weights_data = weights
 output_data = output_ref.permute(0, 2, 3, 1)
 
-print("conv input shape (TXT INPUT): ", input_data.shape)     # N, H, W, K
+print("conv input shape: ", input_data.shape)     # N, H, W, K
 print("conv weight shape: ", weights_data.shape) # K, C, R, S
 print("conv out shape: ", output_data.shape)   # N, H, W, C
 print("-" * 50)
@@ -59,42 +59,46 @@ print("-" * 50)
 
 # First, unfold the input to im2col format
 unfolded_input = torch.nn.functional.unfold(input_data.permute(0, 3, 1, 2), (R, S), padding=1)
-input_gemm = unfolded_input.permute(0, 2, 1).contiguous().view(-1, C * R * S)
+print(unfolded_input.shape)
+input_gemm = unfolded_input.permute(0, 2, 1).contiguous()
+print(input_gemm.shape)
 
-# Reshape weights to match the GEMM operation
-weights_gemm = weights_data.view(K, -1).contiguous()
+# input_gemm = input_gemm.view(-1, C * R * S)
 
-# Perform the GEMM operation
-output_gemm = input_gemm @ weights_gemm.t()
+# # Reshape weights to match the GEMM operation
+# weights_gemm = weights_data.view(K, -1).contiguous()
 
-# Reshape the output to match the expected output shape
-output_gemm_check = output_gemm.view(N, P, Q, K)
+# # Perform the GEMM operation
+# output_gemm = input_gemm @ weights_gemm.t()
 
-# print shapes
-print("A matrix shape: ", input_gemm.shape)
-print("B matrix shape (TXT INPUT): ", weights_gemm.shape)
-print("Output shape (TXT INPUT): ", output_gemm.shape)
-print("-" * 50)
+# # Reshape the output to match the expected output shape
+# output_gemm_check = output_gemm.view(N, P, Q, K)
 
-# print out the difference between the two outputs
-print("Verified implicit GEMM wrt PyTorch Conv - max diff: ", torch.max(torch.abs(output_gemm_check - output_data)).item())
+# # print shapes
+# print("A matrix shape: ", input_gemm.shape)
+# print("B matrix shape (TXT INPUT): ", weights_gemm.shape)
+# print("Output shape (TXT INPUT): ", output_gemm.shape)
+# print("-" * 50)
 
-fn = f'randn.txt'
-with open(fn, 'w') as f:
-    af = input_gemm.to(torch.float32).flatten().detach().cpu().numpy()
-    bf = weights_gemm.to(torch.float32).flatten().detach().cpu().numpy()
-    cf = output_gemm.to(torch.float32).flatten().detach().cpu().numpy()
+# # print out the difference between the two outputs
+# print("Verified implicit GEMM wrt PyTorch Conv - max diff: ", torch.max(torch.abs(output_gemm_check - output_data)).item())
+
+# fn = f'randn.txt'
+# with open(fn, 'w') as f:
+#     af = input_gemm.to(torch.float32).flatten().detach().cpu().numpy()
+#     bf = weights_gemm.to(torch.float32).flatten().detach().cpu().numpy()
+#     cf = output_gemm.to(torch.float32).flatten().detach().cpu().numpy()
     
-    for i in trange(input_gemm.shape[0] * input_gemm.shape[1]):
-        f.write(repr(af[i]))
-        f.write(' ')
-    for i in trange(weights_gemm.shape[0] * weights_gemm.shape[1]):
-        f.write(repr(bf[i]))
-        f.write(' ')
-    for i in trange(output_gemm.shape[0] * output_gemm.shape[1]):
-        f.write(repr(cf[i]))
-        f.write(' ')
+#     for i in trange(input_gemm.shape[0] * input_gemm.shape[1]):
+#         f.write(repr(af[i]))
+#         f.write(' ')
+#     for i in trange(weights_gemm.shape[0] * weights_gemm.shape[1]):
+#         f.write(repr(bf[i]))
+#         f.write(' ')
+#     for i in trange(output_gemm.shape[0] * output_gemm.shape[1]):
+#         f.write(repr(cf[i]))
+#         f.write(' ')
 
     
-print(f"Generated {fn}")
+# print(f"Generated {fn}")
 
